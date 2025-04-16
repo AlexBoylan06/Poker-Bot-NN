@@ -10,7 +10,7 @@ SUITS = 'CDHS'
 CARD_TO_INDEX = {f'{rank}{suit}': i for i, (rank, suit) in enumerate((r, s) for s in SUITS for r in RANKS)}
 
 def encode_cards(cards):
-    """Convert cards to a 52-bit one-hot vector.."""
+    """Convert cards to a 52-bit one-hot vector."""
     encoding = np.zeros(52, dtype=np.float32)
     for card in cards.split(', '):
         index = CARD_TO_INDEX[card]
