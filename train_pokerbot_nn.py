@@ -1,85 +1,83 @@
 import torch
-import torch.optim as optim
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
-from pokerbot_nn import PokerNN
-from preproccess_nn import load_and_preprocess_data
+import torch.optim as optim
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+import os
 
-# Hyperparameters
-BATCH_SIZE = 32
-EPOCHS = 20
-LEARNING_RATE = 0.001
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Assuming you already have a dataset
+data = pd.read_csv("poker_data_onehot.csv")
+X = data.drop(columns=['label']).values
+y = data['label'].values
 
-# Load data
-file = 'data/poker_data.csv'
-X_train, X_test, y_train, y_test = load_and_preprocess_data(file)
+# Train-test split
+X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Create DataLoaders
-train_dataset = TensorDataset(X_train, y_train)
-test_dataset = TensorDataset(X_test, y_test)
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE)
+# Convert to PyTorch tensors
+X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train, dtype=torch.float32).view(-1, 1)
+X_val_tensor = torch.tensor(X_val, dtype=torch.float32)
+y_val_tensor = torch.tensor(y_val, dtype=torch.float32).view(-1, 1)
 
-# Initialize model
-model = PokerNN().to(DEVICE)
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+# Define neural network
+class PokerNN(nn.Module):
+    def __init__(self, input_dim):
+        super().__init__()
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
+        )
 
-def train():
-    model.train()
-    total_loss = 0
-    correct = 0
-    total = 0
+    def forward(self, x):
+        return self.model(x)
 
-    for inputs, labels in train_loader:
-        inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
+model = PokerNN(X_train.shape[1])
+loss_fn = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-
-        total_loss += loss.item()
-        _, predicted = torch.max(outputs, 1)
-        correct += (predicted == labels).sum().item()
-        total += labels.size(0)
-
-    avg_loss = total_loss / len(train_loader)
-    accuracy = correct / total * 100
-    return avg_loss, accuracy
-
-def test():
-    model.eval()
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs, labels = inputs.to(DEVICE), labels.to(DEVICE)
-            outputs = model(inputs)
-            _, predicted = torch.max(outputs, 1)
-            correct += (predicted == labels).sum().item()
-            total += labels.size(0)
-
-    accuracy = correct / total * 100
-    return accuracy
+# For tracking
+best_val_loss = float('inf')
+train_losses = []
+val_losses = []
 
 # Training loop
-best_accuracy = 0
-for epoch in range(EPOCHS):
-    train_loss, train_accuracy = train()
-    test_accuracy = test()
+epochs = 1000
+for epoch in range(epochs):
+    model.train()
+    optimizer.zero_grad()
+    output = model(X_train_tensor)
+    loss = loss_fn(output, y_train_tensor)
+    loss.backward()
+    optimizer.step()
+    train_losses.append(loss.item())
 
-    print(f'Epoch [{epoch+1}/{EPOCHS}] - '
-          f'Train Loss: {train_loss:.4f}, '
-          f'Train Accuracy: {train_accuracy:.2f}%, '
-          f'Test Accuracy: {test_accuracy:.2f}%')
+    # Validation
+    model.eval()
+    with torch.no_grad():
+        val_output = model(X_val_tensor)
+        val_loss = loss_fn(val_output, y_val_tensor)
+        val_losses.append(val_loss.item())
 
-    # Save model if it improves
-    if test_accuracy > best_accuracy:
-        best_accuracy = test_accuracy
-        torch.save(model.state_dict(), 'models/best_poker_nn.pth')
-        print(f"✅ Model saved with accuracy: {best_accuracy:.2f}%")
+    # Save best model
+    if val_loss.item() < best_val_loss:
+        best_val_loss = val_loss.item()
+        torch.save(model.state_dict(), "best_model.pth")
+        print(f"Epoch {epoch+1}: ✅ New best model saved with val_loss = {val_loss.item():.4f}")
+    else:
+        print(f"Epoch {epoch+1}: val_loss = {val_loss.item():.4f}")
 
-print("🎯 Training complete!")
+# ✅ Plot training and validation loss
+plt.plot(train_losses, label='Training Loss')
+plt.plot(val_losses, label='Validation Loss')
+plt.xlabel("Epoch")
+plt.ylabel("MSE Loss")
+plt.title("Training vs. Validation Loss")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
